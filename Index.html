@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portfolio Spark</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; }
+  .glass-card { background-color: #18181b; border: 1px solid #3f3f46; }
+  .big-number { font-size: 2.1rem; line-height: 1; font-weight: 700; }
+  .tab-active { background-color: #27251f; border-bottom: 3px solid #eab308; }
+  .focusable { transition: transform 0.1s; }
+  .focusable:focus { outline: 3px solid #eab308; outline-offset: 2px; transform: scale(1.02); }
+  .section { display: none; }
+  .section.active { display: block; }
+  .pnl-positive { color: #4ade80; }
+  .pnl-negative { color: #f87171; }
+</style>
+</head>
+<body class="bg-zinc-950 text-white max-w-[600px] mx-auto p-4">
+
+  <!-- Header -->
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h1 class="text-3xl font-bold tracking-tighter">Portfolio Spark</h1>
+      <p class="text-yellow-400 text-xs">Simulated Brokerage</p>
+    </div>
+    <button onclick="refreshPrices()" class="px-4 py-2 bg-yellow-500 text-black text-sm font-bold rounded-2xl focusable">REFRESH</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-4 bg-zinc-900 p-1 rounded-2xl text-sm">
+    <button onclick="switchTab(0)" class="tab-btn flex-1 py-3 rounded-xl tab-active focusable" data-tab="0">Dashboard</button>
+    <button onclick="switchTab(1)" class="tab-btn flex-1 py-3 rounded-xl focusable" data-tab="1">Trade</button>
+    <button onclick="switchTab(2)" class="tab-btn flex-1 py-3 rounded-xl focusable" data-tab="2">Holdings</button>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="tab-0" class="section active">
+    <div class="glass-card rounded-3xl p-5 mb-4">
+      <div class="text-xs text-zinc-400">TOTAL PORTFOLIO VALUE</div>
+      <div id="totalValue" class="big-number text-white">$0.00</div>
+      <div class="mt-2 flex gap-4">
+        <div>
+          <div class="text-xs text-zinc-400">TODAY'S P&amp;L</div>
+          <div id="todayChange" class="text-xl font-semibold">$0.00</div>
+        </div>
+        <div>
+          <div class="text-xs text-zinc-400">TOTAL P&amp;L</div>
+          <div id="totalPnL" class="text-xl font-semibold">$0.00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Allocation Chart -->
+    <div class="glass-card rounded-3xl p-5 mb-4">
+      <div class="text-sm font-semibold mb-3">Allocation</div>
+      <div class="flex justify-center">
+        <canvas id="overviewChart" width="240" height="240"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRADE TAB -->
+  <div id="tab-1" class="section">
+    <div class="glass-card rounded-3xl p-5">
+      <h3 class="font-semibold mb-4 text-lg">Place Trade</h3>
+      
+      <div class="space-y-4">
+        <div>
+          <label class="text-xs text-zinc-400 block mb-1">Asset Type</label>
+          <select id="newType" class="w-full bg-zinc-900 border border-zinc-700 rounded-2xl p-3 text-lg focusable">
+            <option value="Stock">Stock</option>
+            <option value="Crypto">Crypto</option>
+            <option value="Options">Options</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="text-xs text-zinc-400 block mb-1">Symbol / Ticker</label>
+          <input id="newTicker" type="text" placeholder="GME or BTC-USD" class="w-full bg-zinc-900 border border-zinc-700 rounded-2xl p-3 text-lg uppercase focusable">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs text-zinc-400 block mb-1">Quantity</label>
+            <input id="newShares" type="number" step="0.01" placeholder="10" class="w-full bg-zinc-900 border border-zinc-700 rounded-2xl p-3 text-lg focusable">
+          </div>
+          <div>
+            <label class="text-xs text-zinc-400 block mb-1">Price Paid</label>
+            <input id="newAvgCost" type="number" step="0.01" placeholder="24.50" class="w-full bg-zinc-900 border border-zinc-700 rounded-2xl p-3 text-lg focusable">
+          </div>
+        </div>
+
+        <button onclick="addHolding()" class="w-full py-4 bg-emerald-500 hover:bg-emerald-600 text-black font-bold rounded-2xl text-lg focusable mt-2">
+          ADD TO PORTFOLIO
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- HOLDINGS TAB -->
+  <div id="tab-2" class="section">
+    <div id="holdingsList" class="space-y-2"></div>
+  </div>
+
+<script>
+// Full updated code with brokerage feel + P&amp;L
+let holdings = JSON.parse(localStorage.getItem('portfolioSparkHoldings') || '[]');
+let liveData = {};
+let overviewChartInstance = null;
+
+function saveHoldings() {
+  localStorage.setItem('portfolioSparkHoldings', JSON.stringify(holdings));
+}
+
+async function fetchTickerData(ticker) {
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker.toUpperCase()}?interval=1d&range=1d`);
+    const json = await res.json();
+    const meta = json.chart.result[0].meta;
+    const price = meta.regularMarketPrice;
+    const prevClose = meta.previousClose || price;
+    return { price, prevClose, change: price - prevClose, changePct: ((price - prevClose) / prevClose) * 100 };
+  } catch (e) {
+    return { price: null, prevClose: null, change: 0, changePct: 0 };
+  }
+}
+
+async function refreshPrices() {
+  if (holdings.length === 0) return;
+  liveData = {};
+  for (let h of holdings) {
+    liveData[h.ticker] = await fetchTickerData(h.ticker);
+    await new Promise(r => setTimeout(r, 120));
+  }
+  renderAll();
+}
+
+function calculatePortfolio() {
+  let totalValue = 0, totalCost = 0, dailyChange = 0;
+  holdings.forEach(h => {
+    const d = liveData[h.ticker] || { price: h.avgCost };
+    const currentValue = h.shares * (d.price || h.avgCost);
+    totalValue += currentValue;
+    totalCost += h.shares * h.avgCost;
+    dailyChange += h.shares * (d.change || 0);
+  });
+  return { totalValue, totalCost, dailyChange, totalPnL: totalValue - totalCost };
+}
+
+function calculateByType(type) {
+  let value = 0;
+  holdings.filter(h => h.type === type).forEach(h => {
+    const d = liveData[h.ticker] || { price: h.avgCost };
+    value += h.shares * (d.price || h.avgCost);
+  });
+  return { value };
+}
+
+function renderOverviewChart() {
+  const ctx = document.getElementById('overviewChart');
+  if (overviewChartInstance) overviewChartInstance.destroy();
+
+  const stocks = calculateByType('Stock').value;
+  const crypto = calculateByType('Crypto').value;
+  const options = calculateByType('Options').value;
+
+  if (stocks + crypto + options === 0) {
+    ctx.style.display = 'none';
+    return;
+  }
+  ctx.style.display = 'block';
+
+  overviewChartInstance = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: ['Stocks', 'Crypto', 'Options'],
+      datasets: [{
+        data: [stocks, crypto, options],
+        backgroundColor: ['#eab308', '#22c55e', '#a78bfa'],
+        borderWidth: 0
+      }]
+    },
+    options: {
+      cutout: '65%',
+      plugins: {
+        legend: { position: 'bottom', labels: { color: '#a1a1aa', font: { size: 11 } } }
+      }
+    }
+  });
+}
+
+function renderAll() {
+  const { totalValue, dailyChange, totalPnL } = calculatePortfolio();
+
+  document.getElementById('totalValue').innerText = '$' + totalValue.toFixed(2);
+
+  const changeEl = document.getElementById('todayChange');
+  changeEl.innerText = (dailyChange >= 0 ? '+' : '') + '$' + dailyChange.toFixed(2);
+  changeEl.className = dailyChange >= 0 ? 'text-xl font-semibold pnl-positive' : 'text-xl font-semibold pnl-negative';
+
+  const pnlEl = document.getElementById('totalPnL');
+  pnlEl.innerText = (totalPnL >= 0 ? '+' : '') + '$' + totalPnL.toFixed(2);
+  pnlEl.className = totalPnL >= 0 ? 'text-xl font-semibold pnl-positive' : 'text-xl font-semibold pnl-negative';
+
+  // Holdings list
+  const container = document.getElementById('holdingsList');
+  container.innerHTML = '';
+  
+  if (holdings.length === 0) {
+    container.innerHTML = `<div class="text-center py-8 text-zinc-400">No positions. Use the Trade tab to add holdings.</div>`;
+    return;
+  }
+
+  holdings.forEach((h, index) => {
+    const d = liveData[h.ticker] || { price: h.avgCost };
+    const currentValue = h.shares * (d.price || h.avgCost);
+    const costBasis = h.shares * h.avgCost;
+    const pnl = currentValue - costBasis;
+    const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+
+    const div = document.createElement('div');
+    div.className = `glass-card rounded-2xl p-4`;
+    div.innerHTML = `
+      <div class="flex justify-between items-start">
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="font-bold text-lg">${h.ticker}</span>
+            <span class="text-xs px-2 py-0.5 rounded bg-zinc-800">${h.type}</span>
+          </div>
+          <div class="text-xs text-zinc-400">${h.shares} shares @ $${h.avgCost}</div>
+        </div>
+        <div class="text-right">
+          <div class="font-semibold">$${currentValue.toFixed(2)}</div>
+          <div class="${pnl >= 0 ? 'pnl-positive' : 'pnl-negative'} text-sm">
+            ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} (${pnlPct.toFixed(1)}%)
+          </div>
+        </div>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+
+  renderOverviewChart();
+}
+
+function addHolding() {
+  const type = document.getElementById('newType').value;
+  const ticker = document.getElementById('newTicker').value.trim().toUpperCase();
+  const shares = parseFloat(document.getElementById('newShares').value);
+  const avgCost = parseFloat(document.getElementById('newAvgCost').value);
+
+  if (!ticker || !shares || !avgCost) {
+    alert("Please fill in Symbol, Quantity, and Price Paid");
+    return;
+  }
+
+  holdings.push({ id: Date.now(), type, ticker, shares, avgCost });
+  saveHoldings();
+
+  // Clear form
+  document.getElementById('newTicker').value = '';
+  document.getElementById('newShares').value = '';
+  document.getElementById('newAvgCost').value = '';
+
+  refreshPrices();
+  switchTab(2); // Go to Holdings after adding
+}
+
+function switchTab(tabIndex) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-' + tabIndex).classList.add('active');
+  document.querySelectorAll('.tab-btn').forEach((btn, i) => btn.classList.toggle('tab-active', i === tabIndex));
+}
+
+async function init() {
+  renderAll();
+  if (holdings.length > 0) {
+    await refreshPrices();
+  }
+}
+init();
+</script>
+</body>
+</html>
